@@ -29,10 +29,8 @@ def _multiply_weights(X, sample_weight):
         return X
     else:
         n_samples = X.shape[0]
-        sample_weight = sample_weight * np.ones(n_samples)
-        sample_weight_matrix = dia_matrix((sample_weight, 0),
-                                          shape=(n_samples, n_samples))
-        return safe_sparse_dot(sample_weight_matrix, X)
+
+        return X * sample_weight[:, np.newaxis]
 
 
 class BaseELM(six.with_metaclass(ABCMeta, BaseEstimator)):
@@ -55,14 +53,6 @@ class BaseELM(six.with_metaclass(ABCMeta, BaseEstimator)):
         self.verbose = verbose
         self.warm_start = warm_start
         self.random_state = random_state
-
-        # public attributes
-        self.classes_ = None
-        self.coef_hidden_ = None
-        self.coef_output_ = None
-
-        # private attributes
-        self._HT_H_accumulated = None
 
     def _init_weights(self, n_features):
         """Initialize the parameter weights."""
@@ -93,7 +83,7 @@ class BaseELM(six.with_metaclass(ABCMeta, BaseEstimator)):
 
         return hidden_activations
 
-    def _fit(self, X, y, incremental=False):
+    def _fit(self, X, y, sample_weight=None, incremental=False):
         """Fit the model to the data X and target y."""
         # Validate input params
         if self.n_hidden <= 0:
@@ -105,6 +95,16 @@ class BaseELM(six.with_metaclass(ABCMeta, BaseEstimator)):
                              "activation are %s." % (self.activation,
                                                      ACTIVATIONS))
 
+        # Initialize public attributes
+        if not hasattr(self, 'classes_'):
+            self.classes_ = None
+        if not hasattr(self, 'coef_hidden_'):
+            self.coef_hidden_ = None
+
+        # Initialize private attributes
+        if not hasattr(self, '_HT_H_accumulated'):
+            self._HT_H_accumulated = None
+
         X, y = check_X_y(X, y, accept_sparse=['csr', 'csc', 'coo'],
                          dtype=np.float64, order="C", multi_output=True)
 
@@ -112,7 +112,6 @@ class BaseELM(six.with_metaclass(ABCMeta, BaseEstimator)):
         if y.ndim == 2 and y.shape[1] == 1:
             y = column_or_1d(y, warn=True)
 
-        sample_weight = None
         # Classification
         if isinstance(self, ClassifierMixin):
             self.label_binarizer_.fit(y)
@@ -228,11 +227,11 @@ class BaseELM(six.with_metaclass(ABCMeta, BaseEstimator)):
             if self.verbose:
                 y_scores = self._decision_scores(X[batch_slice])
                 print("Batch %d, Training mean squared error = %f" %
-                     (batch + 1, mean_squared_error(y[batch_slice], y_scores,
-                                                    sample_weight=sw)))
+                      (batch + 1, mean_squared_error(y[batch_slice], y_scores,
+                                                     sample_weight=sw)))
         return self
 
-    def fit(self, X, y):
+    def fit(self, X, y, sample_weight=None):
         """Fit the model to the data X and target y.
 
         Parameters
@@ -247,9 +246,9 @@ class BaseELM(six.with_metaclass(ABCMeta, BaseEstimator)):
         -------
         self : returns a trained ELM usable for prediction.
         """
-        return self._fit(X, y, incremental=False)
+        return self._fit(X, y, sample_weight=sample_weight, incremental=False)
 
-    def partial_fit(self, X, y):
+    def partial_fit(self, X, y, sample_weight=None):
         """Fit the model to the data X and target y.
 
         Parameters
@@ -264,7 +263,7 @@ class BaseELM(six.with_metaclass(ABCMeta, BaseEstimator)):
         -------
         self : returns a trained ELM usable for prediction.
         """
-        self._fit(X, y, incremental=True)
+        self._fit(X, y, sample_weight=sample_weight, incremental=True)
 
         return self
 
@@ -283,8 +282,17 @@ class BaseELM(six.with_metaclass(ABCMeta, BaseEstimator)):
         """
         X = check_array(X, accept_sparse=['csr', 'csc', 'coo'])
 
-        hidden_activations = self._compute_hidden_activations(X)
-        y_pred = safe_sparse_dot(hidden_activations, self.coef_output_)
+        if self.batch_size is None:
+            hidden_activations = self._compute_hidden_activations(X)
+            y_pred = safe_sparse_dot(hidden_activations, self.coef_output_)
+        else:
+            n_samples = X.shape[0]
+            batches = gen_batches(X.shape[0], self.batch_size)
+
+            y_pred = np.zeros((n_samples, self.n_outputs_))
+            for batch in batches:
+                h_batch = self._compute_hidden_activations(X[batch])
+                y_pred[batch] = safe_sparse_dot(h_batch, self.coef_output_)
 
         return y_pred
 
@@ -333,7 +341,7 @@ class ELMClassifier(BaseELM, ClassifierMixin):
             returns f(x) = tanh(x).
 
          - 'relu', the rectified linear unit function,
-            returns f(x) = max(0, x)
+            returns f(x) = max(0, x).
 
     batch_size : int, optional, default None
         If None is given, batch_size is set as the number of samples.
@@ -386,7 +394,7 @@ class ELMClassifier(BaseELM, ClassifierMixin):
         training deep feedforward neural networks." International Conference
         on Artificial Intelligence and Statistics. 2010.
     """
-    def __init__(self, n_hidden=500, activation='tanh', C=1,
+    def __init__(self, n_hidden=100, activation='relu', C=1,
                  class_weight=None, weight_scale=1.0, batch_size=None,
                  verbose=False, warm_start=False, random_state=None):
         super(ELMClassifier, self).__init__(n_hidden=n_hidden,
@@ -525,7 +533,7 @@ class ELMRegressor(BaseELM, RegressorMixin):
             returns f(x) = tanh(x).
 
          - 'relu', the rectified linear unit function,
-            returns f(x) = max(0, x)
+            returns f(x) = max(0, x).
 
     batch_size : int, optional, default None
         If None is given, batch_size is set as the number of samples.
@@ -575,7 +583,7 @@ class ELMRegressor(BaseELM, RegressorMixin):
         training deep feedforward neural networks." International Conference
         on Artificial Intelligence and Statistics. 2010.
     """
-    def __init__(self, n_hidden=100, activation='tanh', weight_scale=1.0,
+    def __init__(self, n_hidden=100, activation='relu', weight_scale=1.0,
                  batch_size=None, C=10e5, verbose=False, warm_start=False,
                  random_state=None):
         super(ELMRegressor, self).__init__(n_hidden=n_hidden,

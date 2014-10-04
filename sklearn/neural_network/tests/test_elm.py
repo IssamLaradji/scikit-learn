@@ -16,6 +16,7 @@ from itertools import product
 from sklearn import cross_validation
 from sklearn.datasets import load_digits, load_boston
 from sklearn.datasets import make_regression, make_multilabel_classification
+from sklearn.ensemble import AdaBoostClassifier
 from sklearn.externals.six.moves import cStringIO as StringIO
 from sklearn.metrics import roc_auc_score
 from sklearn.neural_network import ELMClassifier
@@ -82,9 +83,9 @@ def test_classification():
     classification digits datasets.
     """
     for name, activation in product(classification_datasets, ACTIVATION_TYPES):
-            elm = ELMClassifier(n_hidden=50, activation=activation,
-                                weight_scale=10, random_state=random_state)
-            check_elm(elm, 'classification', name, 150, 0.95)
+        elm = ELMClassifier(n_hidden=50, activation=activation,
+                            weight_scale=10, random_state=random_state)
+        check_elm(elm, 'classification', name, 150, 0.95)
 
 
 def test_regression():
@@ -261,6 +262,16 @@ def test_recursive_and_standard():
 
         assert_array_equal(pred1, pred2)
         assert_greater(elm_standard.score(X, y), 0.95)
+
+
+def test_sample_weight_elm():
+    """Smoke test - AdaBoostClassifier should work with ELMClassifer."""
+    X = Xdigits_binary[:50]
+    y = ydigits_binary[:50]
+
+    elm = ELMClassifier(n_hidden=4)
+    clf = AdaBoostClassifier(base_estimator=elm)
+    clf.fit(X, y)
 
 
 def test_sparse_matrices():

@@ -172,7 +172,7 @@ Tips on Practical Use
     therefore decrease regularization.
 
   * **Setting weight_scale**:  this controls regularization of the weights 
-    the same way as ``C`` does; but instead of regularizing the hidden-to-output 
+    the same way as ``C`` does; but instead of regularizing the hidden-to-output
     layer weights, it regularizes the input-to-hidden layer weights.
 
   * **Setting class_weight**: if the dataset contains an imbalanced ratio 

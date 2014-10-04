@@ -31,7 +31,7 @@ def plot_decision_function(clf, axis, title):
     axis.imshow(Z, interpolation='nearest',
                 extent=(xx.min(), xx.max(), yy.min(), yy.max()), aspect='auto',
                 origin='lower', cmap=plt.cm.PuOr_r)
-    axis.contour(xx, yy, Z, levels=[0], linewidths=2,
+    axis.contour(xx, yy, Z, levels=[0], linewidths=2, colors = 'b',
                  linetypes='--')
     axis.scatter(X[:, 0], X[:, 1], s=20, c=y, cmap=plt.cm.Paired)
     axis.axis('off')
