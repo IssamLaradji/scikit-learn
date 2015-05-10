@@ -12,6 +12,7 @@ from .base import BaseEstimator, ClassifierMixin, RegressorMixin
 from .utils import check_random_state
 from .utils.validation import check_array
 from .utils.validation import check_consistent_length
+from .utils import deprecated
 from .utils.random import random_choice_csc
 from .utils.stats import _weighted_percentile
 from .utils.multiclass import class_distribution
@@ -33,8 +34,6 @@ class DummyClassifier(BaseEstimator, ClassifierMixin):
           set's class distribution.
         * "most_frequent": always predicts the most frequent label in the
           training set.
-        * "prior": always predicts the class that maximizes the class prior
-          (like "most_frequent") and ``predict_proba`` returns the class prior.
         * "uniform": generates predictions uniformly at random.
         * "constant": always predicts a constant label that is provided by
           the user. This is useful for metrics that evaluate a non-majority
@@ -97,7 +96,7 @@ class DummyClassifier(BaseEstimator, ClassifierMixin):
             Returns self.
         """
         if self.strategy not in ("most_frequent", "stratified", "uniform",
-                                 "constant", "prior"):
+                                 "constant"):
             raise ValueError("Unknown strategy type.")
 
         if self.strategy == "uniform" and sp.issparse(y):
@@ -149,7 +148,8 @@ class DummyClassifier(BaseEstimator, ClassifierMixin):
         return self
 
     def predict(self, X):
-        """Perform classification on test vectors X.
+        """
+        Perform classification on test vectors X.
 
         Parameters
         ----------
@@ -189,15 +189,15 @@ class DummyClassifier(BaseEstimator, ClassifierMixin):
 
         if self.sparse_output_:
             class_prob = None
-            if self.strategy in ("most_frequent", "prior"):
+            if self.strategy == "most_frequent":
                 classes_ = [np.array([cp.argmax()]) for cp in class_prior_]
 
             elif self.strategy == "stratified":
                 class_prob = class_prior_
 
             elif self.strategy == "uniform":
-                raise ValueError("Sparse target prediction is not "
-                                 "supported with the uniform strategy")
+                    raise ValueError("Sparse target prediction is not "
+                                     "supported with the uniform strategy")
 
             elif self.strategy == "constant":
                 classes_ = [np.array([c]) for c in constant]
@@ -205,7 +205,7 @@ class DummyClassifier(BaseEstimator, ClassifierMixin):
             y = random_choice_csc(n_samples, classes_, class_prob,
                                   self.random_state)
         else:
-            if self.strategy in ("most_frequent", "prior"):
+            if self.strategy == "most_frequent":
                 y = np.tile([classes_[k][class_prior_[k].argmax()] for
                              k in range(self.n_outputs_)], [n_samples, 1])
 
@@ -269,8 +269,6 @@ class DummyClassifier(BaseEstimator, ClassifierMixin):
                 ind = np.ones(n_samples, dtype=int) * class_prior_[k].argmax()
                 out = np.zeros((n_samples, n_classes_[k]), dtype=np.float64)
                 out[:, ind] = 1.0
-            elif self.strategy == "prior":
-                out = np.ones((n_samples, 1)) * class_prior_[k]
 
             elif self.strategy == "stratified":
                 out = rs.multinomial(1, class_prior_[k], size=n_samples)
@@ -362,6 +360,13 @@ class DummyRegressor(BaseEstimator, RegressorMixin):
         self.constant = constant
         self.quantile = quantile
 
+    @property
+    @deprecated('This will be removed in version 0.17')
+    def y_mean_(self):
+        if self.strategy == 'mean':
+            return self.constant_
+        raise AttributeError
+
     def fit(self, X, y, sample_weight=None):
         """Fit the random regressor.
 
@@ -430,7 +435,7 @@ class DummyRegressor(BaseEstimator, RegressorMixin):
 
             self.constant = check_array(self.constant,
                                         accept_sparse=['csr', 'csc', 'coo'],
-                                        ensure_2d=False, ensure_min_samples=0)
+                                        ensure_2d=False)
 
             if self.output_2d_ and self.constant.shape[0] != y.shape[1]:
                 raise ValueError(

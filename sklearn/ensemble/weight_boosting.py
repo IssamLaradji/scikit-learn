@@ -39,9 +39,7 @@ from ..tree.tree import BaseDecisionTree
 from ..tree._tree import DTYPE
 from ..utils import check_array, check_X_y, check_random_state
 from ..metrics import accuracy_score, r2_score
-from sklearn.utils.validation import (
-        has_fit_parameter,
-        check_is_fitted)
+from sklearn.utils.validation import has_fit_parameter
 
 __all__ = [
     'AdaBoostClassifier',
@@ -162,6 +160,10 @@ class BaseWeightBoosting(six.with_metaclass(ABCMeta, BaseEnsemble)):
                 sample_weight /= sample_weight_sum
 
         return self
+
+    def _check_fitted(self):
+        if not hasattr(self, "estimators_"):
+            raise ValueError("call fit first")
 
     @abstractmethod
     def _boost(self, iboost, X, y, sample_weight):
@@ -655,7 +657,7 @@ class AdaBoostClassifier(BaseWeightBoosting, ClassifierMixin):
             values closer to -1 or 1 mean more like the first or second
             class in ``classes_``, respectively.
         """
-        check_is_fitted(self, "n_classes_")
+        self._check_fitted()
         X = self._validate_X_predict(X)
 
         n_classes = self.n_classes_
@@ -699,7 +701,7 @@ class AdaBoostClassifier(BaseWeightBoosting, ClassifierMixin):
             values closer to -1 or 1 mean more like the first or second
             class in ``classes_``, respectively.
         """
-        check_is_fitted(self, "n_classes_")
+        self._check_fitted()
         X = self._validate_X_predict(X)
 
         n_classes = self.n_classes_
@@ -749,8 +751,6 @@ class AdaBoostClassifier(BaseWeightBoosting, ClassifierMixin):
             The class probabilities of the input samples. The order of
             outputs is the same of that of the `classes_` attribute.
         """
-        check_is_fitted(self, "n_classes_")
-        
         n_classes = self.n_classes_
         X = self._validate_X_predict(X)
 
@@ -1088,7 +1088,6 @@ class AdaBoostRegressor(BaseWeightBoosting, RegressorMixin):
         y : array of shape = [n_samples]
             The predicted regression values.
         """
-        check_is_fitted(self, "estimator_weights_")
         X = self._validate_X_predict(X)
 
         return self._get_median_predict(X, len(self.estimators_))
@@ -1114,7 +1113,7 @@ class AdaBoostRegressor(BaseWeightBoosting, RegressorMixin):
         y : generator of array, shape = [n_samples]
             The predicted regression values.
         """
-        check_is_fitted(self, "estimator_weights_")
+        self._check_fitted()
         X = self._validate_X_predict(X)
 
         for i, _ in enumerate(self.estimators_, 1):

@@ -1,5 +1,4 @@
 import numpy as np
-from ..utils.fixes import bincount
 
 
 def _balance_weights(y):
@@ -18,7 +17,7 @@ def _balance_weights(y):
     """
     y = np.asarray(y)
     y = np.searchsorted(np.unique(y), y)
-    bins = bincount(y)
+    bins = np.bincount(y)
 
     weights = 1. / bins.take(y)
     weights *= bins.min()

@@ -11,9 +11,8 @@ from .murmurhash import murmurhash3_32
 from .validation import (as_float_array,
                          assert_all_finite, warn_if_not_float,
                          check_random_state, column_or_1d, check_array,
-                         check_consistent_length, check_X_y, indexable,
-                         check_symmetric, DataConversionWarning)
-from .class_weight import compute_class_weight, compute_sample_weight
+                         check_consistent_length, check_X_y, indexable)
+from .class_weight import compute_class_weight
 from ..externals.joblib import cpu_count
 
 
@@ -21,10 +20,9 @@ __all__ = ["murmurhash3_32", "as_float_array",
            "assert_all_finite", "check_array",
            "warn_if_not_float",
            "check_random_state",
-           "compute_class_weight", "compute_sample_weight",
+           "compute_class_weight",
            "column_or_1d", "safe_indexing",
-           "check_consistent_length", "check_X_y", 'indexable',
-           "check_symmetric"]
+           "check_consistent_length", "check_X_y", 'indexable']
 
 
 class deprecated(object):
@@ -149,14 +147,7 @@ def safe_indexing(X, indices):
     """
     if hasattr(X, "iloc"):
         # Pandas Dataframes and Series
-        try:
-            return X.iloc[indices]
-        except ValueError:
-            # Cython typed memoryviews internally used in pandas do not support
-            # readonly buffers.
-            warnings.warn("Copying input dataframe for slicing.",
-                          DataConversionWarning)
-            return X.copy().iloc[indices]
+        return X.iloc[indices]
     elif hasattr(X, "shape"):
         if hasattr(X, 'take') and (hasattr(indices, 'dtype') and
                                    indices.dtype.kind == 'i'):
@@ -176,9 +167,7 @@ def resample(*arrays, **options):
 
     Parameters
     ----------
-    *arrays : sequence of indexable data-structures
-        Indexable data-structures can be arrays, lists, dataframes or scipy
-        sparse matrices with consistent first dimension.
+    `*arrays` : sequence of arrays or scipy.sparse matrices with same shape[0]
 
     replace : boolean, True by default
         Implements resampling with replacement. If False, this will implement
@@ -193,15 +182,14 @@ def resample(*arrays, **options):
 
     Returns
     -------
-    resampled_arrays : sequence of indexable data-structures
-        Sequence of resampled views of the collections. The original arrays are
-        not impacted.
+    Sequence of resampled views of the collections. The original arrays are
+    not impacted.
 
     Examples
     --------
     It is possible to mix sparse and dense arrays in the same run::
 
-      >>> X = np.array([[1., 0.], [2., 1.], [0., 0.]])
+      >>> X = [[1., 0.], [2., 1.], [0., 0.]]
       >>> y = np.array([0, 1, 2])
 
       >>> from scipy.sparse import coo_matrix
@@ -232,6 +220,7 @@ def resample(*arrays, **options):
 
     See also
     --------
+    :class:`sklearn.cross_validation.Bootstrap`
     :func:`sklearn.utils.shuffle`
     """
     random_state = check_random_state(options.pop('random_state', None))
@@ -254,6 +243,8 @@ def resample(*arrays, **options):
             max_n_samples, n_samples))
 
     check_consistent_length(*arrays)
+    arrays = [check_array(x, accept_sparse='csr', ensure_2d=False,
+                          allow_nd=True) for x in arrays]
 
     if replace:
         indices = random_state.randint(0, n_samples, size=(max_n_samples,))
@@ -262,9 +253,12 @@ def resample(*arrays, **options):
         random_state.shuffle(indices)
         indices = indices[:max_n_samples]
 
-    # convert sparse matrices to CSR for row-based indexing
-    arrays = [a.tocsr() if issparse(a) else a for a in arrays]
-    resampled_arrays = [safe_indexing(a, indices) for a in arrays]
+    resampled_arrays = []
+
+    for array in arrays:
+        array = array[indices]
+        resampled_arrays.append(array)
+
     if len(resampled_arrays) == 1:
         # syntactic sugar for the unit argument case
         return resampled_arrays[0]
@@ -280,9 +274,7 @@ def shuffle(*arrays, **options):
 
     Parameters
     ----------
-    *arrays : sequence of indexable data-structures
-        Indexable data-structures can be arrays, lists, dataframes or scipy
-        sparse matrices with consistent first dimension.
+    `*arrays` : sequence of arrays or scipy.sparse matrices with same shape[0]
 
     random_state : int or RandomState instance
         Control the shuffling for reproducible behavior.
@@ -293,15 +285,14 @@ def shuffle(*arrays, **options):
 
     Returns
     -------
-    shuffled_arrays : sequence of indexable data-structures
-        Sequence of shuffled views of the collections. The original arrays are
-        not impacted.
+    Sequence of shuffled views of the collections. The original arrays are
+    not impacted.
 
     Examples
     --------
     It is possible to mix sparse and dense arrays in the same run::
 
-      >>> X = np.array([[1., 0.], [2., 1.], [0., 0.]])
+      >>> X = [[1., 0.], [2., 1.], [0., 0.]]
       >>> y = np.array([0, 1, 2])
 
       >>> from scipy.sparse import coo_matrix
@@ -343,10 +334,6 @@ def safe_sqr(X, copy=True):
     Parameters
     ----------
     X : array like, matrix, sparse matrix
-
-    copy : boolean, optional, default True
-        Whether to create a copy of X and operate on it or to perform
-        inplace computation (default behaviour).
 
     Returns
     -------

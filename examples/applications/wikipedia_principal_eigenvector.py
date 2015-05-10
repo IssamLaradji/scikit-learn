@@ -46,8 +46,6 @@ from scipy import sparse
 
 from sklearn.decomposition import randomized_svd
 from sklearn.externals.joblib import Memory
-from sklearn.externals.six.moves.urllib.request import urlopen
-from sklearn.externals.six import iteritems
 
 
 print(__doc__)
@@ -67,8 +65,9 @@ resources = [
 
 for url, filename in resources:
     if not os.path.exists(filename):
+        import urllib
         print("Downloading data from '%s', please wait..." % url)
-        opener = urlopen(url)
+        opener = urllib.urlopen(url)
         open(filename, 'wb').write(opener.read())
         print()
 
@@ -172,7 +171,7 @@ def get_adjacency_matrix(redirects_filename, page_links_filename, limit=None):
 # stop after 5M links to make it possible to work in RAM
 X, redirects, index_map = get_adjacency_matrix(
     redirects_filename, page_links_filename, limit=5000000)
-names = dict((i, name) for name, i in iteritems(index_map))
+names = dict((i, name) for name, i in index_map.iteritems())
 
 print("Computing the principal singular vectors using randomized_svd")
 t0 = time()

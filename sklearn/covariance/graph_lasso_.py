@@ -18,7 +18,7 @@ from .empirical_covariance_ import (empirical_covariance, EmpiricalCovariance,
 
 from ..utils import ConvergenceWarning
 from ..utils.extmath import pinvh
-from ..utils.validation import check_random_state, check_array
+from ..utils.validation import check_random_state
 from ..linear_model import lars_path
 from ..linear_model import cd_fast
 from ..cross_validation import _check_cv as check_cv, cross_val_score
@@ -79,9 +79,8 @@ def alpha_max(emp_cov):
 # The g-lasso algorithm
 
 def graph_lasso(emp_cov, alpha, cov_init=None, mode='cd', tol=1e-4,
-                enet_tol=1e-4, max_iter=100, verbose=False,
-                return_costs=False, eps=np.finfo(np.float64).eps,
-                return_n_iter=False):
+                max_iter=100, verbose=False, return_costs=False,
+                eps=np.finfo(np.float).eps, return_n_iter=False):
     """l1-penalized covariance estimator
 
     Parameters
@@ -104,10 +103,6 @@ def graph_lasso(emp_cov, alpha, cov_init=None, mode='cd', tol=1e-4,
     tol : positive float, optional
         The tolerance to declare convergence: if the dual gap goes below
         this value, iterations are stopped.
-
-    enet_tol : positive float, optional
-        The tolerance for the elastic net solver used to calculate the descent
-        direction. Only used for mode='cd'.
 
     max_iter : integer, optional
         The maximum number of iterations.
@@ -196,9 +191,6 @@ def graph_lasso(emp_cov, alpha, cov_init=None, mode='cd', tol=1e-4,
     else:
         errors = dict(invalid='raise')
     try:
-        # be robust to the max_iter=0 edge case, see:
-        # https://github.com/scikit-learn/scikit-learn/issues/4134
-        d_gap = np.inf
         for i in range(max_iter):
             for idx in range(n_features):
                 sub_covariance = covariance_[indices != idx].T[indices != idx]
@@ -210,13 +202,14 @@ def graph_lasso(emp_cov, alpha, cov_init=None, mode='cd', tol=1e-4,
                                   / (precision_[idx, idx] + 1000 * eps))
                         coefs, _, _, _ = cd_fast.enet_coordinate_descent_gram(
                             coefs, alpha, 0, sub_covariance, row, row,
-                            max_iter, enet_tol, check_random_state(None), False)
+                            max_iter, tol, check_random_state(None), False)
                     else:
                         # Use LARS
                         _, _, coefs = lars_path(
                             sub_covariance, row, Xy=row, Gram=sub_covariance,
                             alpha_min=alpha / (n_features - 1), copy_Gram=True,
-                            method='lars', return_path=False)
+                            method='lars')
+                        coefs = coefs[:, -1]
                 # Update the precision matrix
                 precision_[idx, idx] = (
                     1. / (covariance_[idx, idx]
@@ -267,31 +260,28 @@ class GraphLasso(EmpiricalCovariance):
 
     Parameters
     ----------
-    alpha : positive float, default 0.01
+    alpha : positive float, optional
         The regularization parameter: the higher alpha, the more
         regularization, the sparser the inverse covariance.
 
-    mode : {'cd', 'lars'}, default 'cd'
+    cov_init : 2D array (n_features, n_features), optional
+        The initial guess for the covariance.
+
+    mode : {'cd', 'lars'}
         The Lasso solver to use: coordinate descent or LARS. Use LARS for
         very sparse underlying graphs, where p > n. Elsewhere prefer cd
         which is more numerically stable.
 
-    tol : positive float, default 1e-4
+    tol : positive float, optional
         The tolerance to declare convergence: if the dual gap goes below
         this value, iterations are stopped.
 
-    max_iter : integer, default 100
+    max_iter : integer, optional
         The maximum number of iterations.
 
-    verbose : boolean, default False
+    verbose : boolean, optional
         If verbose is True, the objective function and dual gap are
         plotted at each iteration.
-
-    assume_centered : boolean, default False
-        If True, data are not centered before computation.
-        Useful when working with data whose mean is almost, but not exactly
-        zero.
-        If False, data are centered before computation.
 
     Attributes
     ----------
@@ -321,7 +311,7 @@ class GraphLasso(EmpiricalCovariance):
         self.store_precision = True
 
     def fit(self, X, y=None):
-        X = check_array(X)
+        X = np.asarray(X)
         if self.assume_centered:
             self.location_ = np.zeros(X.shape[1])
         else:
@@ -461,13 +451,6 @@ class GraphLassoCV(GraphLasso):
         If verbose is True, the objective function and duality gap are
         printed at each iteration.
 
-    assume_centered : Boolean
-        If True, data are not centered before computation.
-        Useful when working with data whose mean is almost, but not exactly
-        zero.
-        If False, data are centered before computation.
-
-
     Attributes
     ----------
     covariance_ : numpy.ndarray, shape (n_features, n_features)
@@ -521,14 +504,7 @@ class GraphLassoCV(GraphLasso):
         self.store_precision = True
 
     def fit(self, X, y=None):
-        """Fits the GraphLasso covariance model to X.
-
-        Parameters
-        ----------
-        X : ndarray, shape (n_samples, n_features)
-            Data from which to compute the covariance estimate
-        """
-        X = check_array(X)
+        X = np.asarray(X)
         if self.assume_centered:
             self.location_ = np.zeros(X.shape[1])
         else:
@@ -591,7 +567,7 @@ class GraphLassoCV(GraphLasso):
             last_finite_idx = 0
             for index, (alpha, scores, _) in enumerate(path):
                 this_score = np.mean(scores)
-                if this_score >= .1 / np.finfo(np.float64).eps:
+                if this_score >= .1 / np.finfo(np.float).eps:
                     this_score = np.nan
                 if np.isfinite(this_score):
                     last_finite_idx = index

@@ -65,24 +65,24 @@ def load_svmlight_file(f, n_features=None, dtype=np.float64,
 
     Parameters
     ----------
-    f : {str, file-like, int}
+    f: {str, file-like, int}
         (Path to) a file to load. If a path ends in ".gz" or ".bz2", it will
         be uncompressed on the fly. If an integer is passed, it is assumed to
         be a file descriptor. A file-like or file descriptor will not be closed
         by this function. A file-like object must be opened in binary mode.
 
-    n_features : int or None
+    n_features: int or None
         The number of features to use. If None, it will be inferred. This
         argument is useful to load several files that are subsets of a
         bigger sliced dataset: each subset might not have examples of
         every feature, hence the inferred shape might vary from one
         slice to another.
 
-    multilabel : boolean, optional, default False
+    multilabel: boolean, optional
         Samples may have several labels each (see
         http://www.csie.ntu.edu.tw/~cjlin/libsvmtools/datasets/multilabel.html)
 
-    zero_based : boolean or "auto", optional, default "auto"
+    zero_based: boolean or "auto", optional
         Whether column indices in f are zero-based (True) or one-based
         (False). If column indices are one-based, they are transformed to
         zero-based to match Python/NumPy conventions.
@@ -91,12 +91,8 @@ def load_svmlight_file(f, n_features=None, dtype=np.float64,
         are unfortunately not self-identifying. Using "auto" or True should
         always be safe.
 
-    query_id : boolean, default False
+    query_id: boolean, defaults to False
         If True, will return the query_id array for each file.
-
-    dtype : numpy data type, default np.float64
-        Data type of dataset to be loaded. This will be the data type of the
-        output numpy arrays ``X`` and ``y``.
 
     Returns
     -------
@@ -222,10 +218,6 @@ def load_svmlight_files(files, n_features=None, dtype=np.float64,
     query_id: boolean, defaults to False
         If True, will return the query_id array for each file.
 
-    dtype : numpy data type, default np.float64
-        Data type of dataset to be loaded. This will be the data type of the
-        output numpy arrays ``X`` and ``y``.
- 
     Returns
     -------
     [X1, y1, ..., Xn, yn]
@@ -235,8 +227,8 @@ def load_svmlight_files(files, n_features=None, dtype=np.float64,
     ..., Xn, yn, qn] where (Xi, yi, qi) is the result from
     load_svmlight_file(files[i])
 
-    Notes
-    -----
+    Rationale
+    ---------
     When fitting a model to a matrix X_train and evaluating it against a
     matrix X_test, it is essential that X_train and X_test have the same
     number of features (X_train.shape[1] == X_test.shape[1]). This may not

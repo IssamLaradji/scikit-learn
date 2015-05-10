@@ -16,7 +16,6 @@ from scipy.sparse import coo_matrix
 import numpy as np
 
 from .expected_mutual_info_fast import expected_mutual_information
-from ...utils.fixes import bincount
 
 
 def comb2(n):
@@ -740,7 +739,7 @@ def entropy(labels):
     if len(labels) == 0:
         return 1.0
     label_idx = np.unique(labels, return_inverse=True)[1]
-    pi = bincount(label_idx).astype(np.float)
+    pi = np.bincount(label_idx).astype(np.float)
     pi = pi[pi > 0]
     pi_sum = np.sum(pi)
     # log(a / b) should be calculated as log(a) - log(b) for

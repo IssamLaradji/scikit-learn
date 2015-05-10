@@ -41,6 +41,8 @@ Single and multi-output problems are both handled.
 
 from __future__ import division
 
+import numpy as np
+
 from warnings import warn
 from abc import ABCMeta, abstractmethod
 
@@ -56,10 +58,9 @@ from ..preprocessing import OneHotEncoder
 from ..tree import (DecisionTreeClassifier, DecisionTreeRegressor,
                     ExtraTreeClassifier, ExtraTreeRegressor)
 from ..tree._tree import DTYPE, DOUBLE
-from ..utils import check_random_state, check_array, compute_sample_weight
-from ..utils.validation import DataConversionWarning, NotFittedError
+from ..utils import check_random_state, check_array
+from ..utils.validation import DataConversionWarning
 from .base import BaseEnsemble, _partition_estimators
-from ..utils.fixes import bincount
 
 __all__ = ["RandomForestClassifier",
            "RandomForestRegressor",
@@ -71,7 +72,7 @@ MAX_INT = np.iinfo(np.int32).max
 
 
 def _parallel_build_trees(tree, forest, X, y, sample_weight, tree_idx, n_trees,
-                          verbose=0, class_weight=None):
+                          verbose=0):
     """Private function used to fit a single tree in parallel."""
     if verbose > 1:
         print("building tree %d of %d" % (tree_idx + 1, n_trees))
@@ -85,11 +86,8 @@ def _parallel_build_trees(tree, forest, X, y, sample_weight, tree_idx, n_trees,
 
         random_state = check_random_state(tree.random_state)
         indices = random_state.randint(0, n_samples, n_samples)
-        sample_counts = bincount(indices, minlength=n_samples)
+        sample_counts = np.bincount(indices, minlength=n_samples)
         curr_sample_weight *= sample_counts
-
-        if class_weight == 'subsample':
-            curr_sample_weight *= compute_sample_weight('auto', y, indices)
 
         tree.fit(X, y, sample_weight=curr_sample_weight, check_input=False)
 
@@ -124,8 +122,7 @@ class BaseForest(six.with_metaclass(ABCMeta, BaseEnsemble,
                  n_jobs=1,
                  random_state=None,
                  verbose=0,
-                 warm_start=False,
-                 class_weight=None):
+                 warm_start=False):
         super(BaseForest, self).__init__(
             base_estimator=base_estimator,
             n_estimators=n_estimators,
@@ -137,7 +134,6 @@ class BaseForest(six.with_metaclass(ABCMeta, BaseEnsemble,
         self.random_state = random_state
         self.verbose = verbose
         self.warm_start = warm_start
-        self.class_weight = class_weight
 
     def apply(self, X):
         """Apply trees in the forest to X, return leaf indices.
@@ -155,10 +151,10 @@ class BaseForest(six.with_metaclass(ABCMeta, BaseEnsemble,
             For each datapoint x in X and for each tree in the forest,
             return the index of the leaf x ends up in.
         """
-        X = self._validate_X_predict(X)
+        X = check_array(X, dtype=DTYPE, accept_sparse="csr")
         results = Parallel(n_jobs=self.n_jobs, verbose=self.verbose,
                            backend="threading")(
-            delayed(_parallel_helper)(tree, 'apply', X, check_input=False)
+            delayed(_parallel_helper)(tree.tree_, 'apply', X)
             for tree in self.estimators_)
 
         return np.array(results).T
@@ -189,8 +185,10 @@ class BaseForest(six.with_metaclass(ABCMeta, BaseEnsemble,
         self : object
             Returns self.
         """
-        # Validate or convert input data
-        X = check_array(X, dtype=DTYPE, accept_sparse="csc")
+        # Convert data
+        # ensure_2d=False because there are actually unit test checking we fail
+        # for 1d. FIXME make this consistent in the future.
+        X = check_array(X, dtype=DTYPE, ensure_2d=False, accept_sparse="csc")
         if issparse(X):
             # Pre-sort indices to avoid that each individual tree of the
             # ensemble sorts the indices.
@@ -203,7 +201,7 @@ class BaseForest(six.with_metaclass(ABCMeta, BaseEnsemble,
         if y.ndim == 2 and y.shape[1] == 1:
             warn("A column-vector y was passed when a 1d array was"
                  " expected. Please change the shape of y to "
-                 "(n_samples,), for example using ravel().",
+                 "(n_samples, ), for example using ravel().",
                  DataConversionWarning, stacklevel=2)
 
         if y.ndim == 1:
@@ -213,16 +211,10 @@ class BaseForest(six.with_metaclass(ABCMeta, BaseEnsemble,
 
         self.n_outputs_ = y.shape[1]
 
-        y, expanded_class_weight = self._validate_y_class_weight(y)
+        y = self._validate_y(y)
 
         if getattr(y, "dtype", None) != DOUBLE or not y.flags.contiguous:
             y = np.ascontiguousarray(y, dtype=DOUBLE)
-
-        if expanded_class_weight is not None:
-            if sample_weight is not None:
-                sample_weight = sample_weight * expanded_class_weight
-            else:
-                sample_weight = expanded_class_weight
 
         # Check parameters
         self._validate_estimator()
@@ -267,7 +259,7 @@ class BaseForest(six.with_metaclass(ABCMeta, BaseEnsemble,
                              backend="threading")(
                 delayed(_parallel_build_trees)(
                     t, self, X, y, sample_weight, i, len(trees),
-                    verbose=self.verbose, class_weight=self.class_weight)
+                    verbose=self.verbose)
                 for i, t in enumerate(trees))
 
             # Collect newly grown trees
@@ -287,17 +279,9 @@ class BaseForest(six.with_metaclass(ABCMeta, BaseEnsemble,
     def _set_oob_score(self, X, y):
         """Calculate out of bag predictions and score."""
 
-    def _validate_y_class_weight(self, y):
+    def _validate_y(self, y):
         # Default implementation
-        return y, None
-
-    def _validate_X_predict(self, X):
-        """Validate X whenever one tries to predict, apply, predict_proba"""
-        if self.estimators_ is None or len(self.estimators_) == 0:
-            raise NotFittedError("Estimator not fitted, "
-                                 "call `fit` before exploiting the model.")
-
-        return self.estimators_[0]._validate_X_predict(X, check_input=True)
+        return y
 
     @property
     def feature_importances_(self):
@@ -309,15 +293,13 @@ class BaseForest(six.with_metaclass(ABCMeta, BaseEnsemble,
         feature_importances_ : array, shape = [n_features]
         """
         if self.estimators_ is None or len(self.estimators_) == 0:
-            raise NotFittedError("Estimator not fitted, "
-                                 "call `fit` before `feature_importances_`.")
+            raise ValueError("Estimator not fitted, "
+                             "call `fit` before `feature_importances_`.")
 
-        all_importances = Parallel(n_jobs=self.n_jobs,
-                                   backend="threading")(
+        all_importances = Parallel(n_jobs=self.n_jobs)(
             delayed(getattr)(tree, 'feature_importances_')
             for tree in self.estimators_)
-
-        return sum(all_importances) / len(self.estimators_)
+        return sum(all_importances) / self.n_estimators
 
 
 class ForestClassifier(six.with_metaclass(ABCMeta, BaseForest,
@@ -338,8 +320,7 @@ class ForestClassifier(six.with_metaclass(ABCMeta, BaseForest,
                  n_jobs=1,
                  random_state=None,
                  verbose=0,
-                 warm_start=False,
-                 class_weight=None):
+                 warm_start=False):
 
         super(ForestClassifier, self).__init__(
             base_estimator,
@@ -350,8 +331,7 @@ class ForestClassifier(six.with_metaclass(ABCMeta, BaseForest,
             n_jobs=n_jobs,
             random_state=random_state,
             verbose=verbose,
-            warm_start=warm_start,
-            class_weight=class_weight)
+            warm_start=warm_start)
 
     def _set_oob_score(self, X, y):
         """Compute out-of-bag score"""
@@ -370,8 +350,7 @@ class ForestClassifier(six.with_metaclass(ABCMeta, BaseForest,
             mask = np.ones(n_samples, dtype=np.bool)
             mask[estimator.indices_] = False
             mask_indices = sample_indices[mask]
-            p_estimator = estimator.predict_proba(X[mask_indices, :],
-                                                  check_input=False)
+            p_estimator = estimator.predict_proba(X[mask_indices, :])
 
             if self.n_outputs_ == 1:
                 p_estimator = [p_estimator]
@@ -398,12 +377,8 @@ class ForestClassifier(six.with_metaclass(ABCMeta, BaseForest,
 
         self.oob_score_ = oob_score / self.n_outputs_
 
-    def _validate_y_class_weight(self, y):
+    def _validate_y(self, y):
         y = np.copy(y)
-        expanded_class_weight = None
-
-        if self.class_weight is not None:
-            y_original = np.copy(y)
 
         self.classes_ = []
         self.n_classes_ = []
@@ -413,41 +388,13 @@ class ForestClassifier(six.with_metaclass(ABCMeta, BaseForest,
             self.classes_.append(classes_k)
             self.n_classes_.append(classes_k.shape[0])
 
-        if self.class_weight is not None:
-            valid_presets = ('auto', 'subsample')
-            if isinstance(self.class_weight, six.string_types):
-                if self.class_weight not in valid_presets:
-                    raise ValueError('Valid presets for class_weight include '
-                                     '"auto" and "subsample". Given "%s".'
-                                     % self.class_weight)
-                if self.warm_start:
-                    warn('class_weight presets "auto" or "subsample" are '
-                         'not recommended for warm_start if the fitted data '
-                         'differs from the full dataset. In order to use '
-                         '"auto" weights, use compute_class_weight("auto", '
-                         'classes, y). In place of y you can use a large '
-                         'enough sample of the full training set target to '
-                         'properly estimate the class frequency '
-                         'distributions. Pass the resulting weights as the '
-                         'class_weight parameter.')
-
-            if self.class_weight != 'subsample' or not self.bootstrap:
-                if self.class_weight == 'subsample':
-                    class_weight = 'auto'
-                else:
-                    class_weight = self.class_weight
-                expanded_class_weight = compute_sample_weight(class_weight,
-                                                              y_original)
-
-        return y, expanded_class_weight
+        return y
 
     def predict(self, X):
         """Predict class for X.
 
-        The predicted class of an input sample is a vote by the trees in
-        the forest, weighted by their probability estimates. That is,
-        the predicted class is the one with highest mean probability
-        estimate across the trees.
+        The predicted class of an input sample is computed as the majority
+        prediction of the trees in the forest.
 
         Parameters
         ----------
@@ -461,6 +408,9 @@ class ForestClassifier(six.with_metaclass(ABCMeta, BaseForest,
         y : array of shape = [n_samples] or [n_samples, n_outputs]
             The predicted classes.
         """
+        # ensure_2d=False because there are actually unit test checking we fail
+        # for 1d.
+        X = check_array(X, ensure_2d=False, accept_sparse="csr")
         proba = self.predict_proba(X)
 
         if self.n_outputs_ == 1:
@@ -481,9 +431,7 @@ class ForestClassifier(six.with_metaclass(ABCMeta, BaseForest,
         """Predict class probabilities for X.
 
         The predicted class probabilities of an input sample is computed as
-        the mean predicted class probabilities of the trees in the forest. The
-        class probability of a single tree is the fraction of samples of the same
-        class in a leaf.
+        the mean predicted class probabilities of the trees in the forest.
 
         Parameters
         ----------
@@ -500,16 +448,16 @@ class ForestClassifier(six.with_metaclass(ABCMeta, BaseForest,
             classes corresponds to that in the attribute `classes_`.
         """
         # Check data
-        X = self._validate_X_predict(X)
+        X = check_array(X, dtype=DTYPE, accept_sparse="csr")
 
         # Assign chunk of trees to jobs
-        n_jobs, _, _ = _partition_estimators(self.n_estimators, self.n_jobs)
+        n_jobs, n_trees, starts = _partition_estimators(self.n_estimators,
+                                                        self.n_jobs)
 
         # Parallel loop
         all_proba = Parallel(n_jobs=n_jobs, verbose=self.verbose,
                              backend="threading")(
-            delayed(_parallel_helper)(e, 'predict_proba', X,
-                                      check_input=False)
+            delayed(_parallel_helper)(e, 'predict_proba', X)
             for e in self.estimators_)
 
         # Reduce
@@ -608,19 +556,20 @@ class ForestRegressor(six.with_metaclass(ABCMeta, BaseForest, RegressorMixin)):
 
         Returns
         -------
-        y : array of shape = [n_samples] or [n_samples, n_outputs]
+        y: array of shape = [n_samples] or [n_samples, n_outputs]
             The predicted values.
         """
         # Check data
-        X = self._validate_X_predict(X)
+        X = check_array(X, dtype=DTYPE, accept_sparse="csr")
 
         # Assign chunk of trees to jobs
-        n_jobs, _, _ = _partition_estimators(self.n_estimators, self.n_jobs)
+        n_jobs, n_trees, starts = _partition_estimators(self.n_estimators,
+                                                        self.n_jobs)
 
         # Parallel loop
         all_y_hat = Parallel(n_jobs=n_jobs, verbose=self.verbose,
                              backend="threading")(
-            delayed(_parallel_helper)(e, 'predict', X, check_input=False)
+            delayed(_parallel_helper)(e, 'predict', X)
             for e in self.estimators_)
 
         # Reduce
@@ -640,7 +589,7 @@ class ForestRegressor(six.with_metaclass(ABCMeta, BaseForest, RegressorMixin)):
             mask = np.ones(n_samples, dtype=np.bool)
             mask[estimator.indices_] = False
             mask_indices = sample_indices[mask]
-            p_estimator = estimator.predict(X[mask_indices, :], check_input=False)
+            p_estimator = estimator.predict(X[mask_indices, :])
 
             if self.n_outputs_ == 1:
                 p_estimator = p_estimator[:, np.newaxis]
@@ -708,7 +657,7 @@ class RandomForestClassifier(ForestClassifier):
         The maximum depth of the tree. If None, then nodes are expanded until
         all leaves are pure or until all leaves contain less than
         min_samples_split samples.
-        Ignored if ``max_leaf_nodes`` is not None.
+        Ignored if ``max_samples_leaf`` is not None.
         Note: this parameter is tree-specific.
 
     min_samples_split : integer, optional (default=2)
@@ -758,24 +707,6 @@ class RandomForestClassifier(ForestClassifier):
         and add more estimators to the ensemble, otherwise, just fit a whole
         new forest.
 
-    class_weight : dict, list of dicts, "auto", "subsample" or None, optional
-
-        Weights associated with classes in the form ``{class_label: weight}``.
-        If not given, all classes are supposed to have weight one. For
-        multi-output problems, a list of dicts can be provided in the same
-        order as the columns of y.
-
-        The "auto" mode uses the values of y to automatically adjust
-        weights inversely proportional to class frequencies in the input data.
-
-        The "subsample" mode is the same as "auto" except that weights are
-        computed based on the bootstrap sample for every tree grown.
-
-        For multi-output, the weights of each column of y will be multiplied.
-
-        Note that these weights will be multiplied with sample_weight (passed
-        through the fit method) if sample_weight is specified.
-
     Attributes
     ----------
     estimators_ : list of DecisionTreeClassifier
@@ -824,8 +755,7 @@ class RandomForestClassifier(ForestClassifier):
                  n_jobs=1,
                  random_state=None,
                  verbose=0,
-                 warm_start=False,
-                 class_weight=None):
+                 warm_start=False):
         super(RandomForestClassifier, self).__init__(
             base_estimator=DecisionTreeClassifier(),
             n_estimators=n_estimators,
@@ -838,8 +768,7 @@ class RandomForestClassifier(ForestClassifier):
             n_jobs=n_jobs,
             random_state=random_state,
             verbose=verbose,
-            warm_start=warm_start,
-            class_weight=class_weight)
+            warm_start=warm_start)
 
         self.criterion = criterion
         self.max_depth = max_depth
@@ -888,7 +817,7 @@ class RandomForestRegressor(ForestRegressor):
         The maximum depth of the tree. If None, then nodes are expanded until
         all leaves are pure or until all leaves contain less than
         min_samples_split samples.
-        Ignored if ``max_leaf_nodes`` is not None.
+        Ignored if ``max_samples_leaf`` is not None.
         Note: this parameter is tree-specific.
 
     min_samples_split : integer, optional (default=2)
@@ -1038,7 +967,7 @@ class ExtraTreesClassifier(ForestClassifier):
         The maximum depth of the tree. If None, then nodes are expanded until
         all leaves are pure or until all leaves contain less than
         min_samples_split samples.
-        Ignored if ``max_leaf_nodes`` is not None.
+        Ignored if ``max_samples_leaf`` is not None.
         Note: this parameter is tree-specific.
 
     min_samples_split : integer, optional (default=2)
@@ -1087,24 +1016,6 @@ class ExtraTreesClassifier(ForestClassifier):
         When set to ``True``, reuse the solution of the previous call to fit
         and add more estimators to the ensemble, otherwise, just fit a whole
         new forest.
-
-    class_weight : dict, list of dicts, "auto", "subsample" or None, optional
-
-        Weights associated with classes in the form ``{class_label: weight}``.
-        If not given, all classes are supposed to have weight one. For
-        multi-output problems, a list of dicts can be provided in the same
-        order as the columns of y.
-
-        The "auto" mode uses the values of y to automatically adjust
-        weights inversely proportional to class frequencies in the input data.
-
-        The "subsample" mode is the same as "auto" except that weights are
-        computed based on the bootstrap sample for every tree grown.
-
-        For multi-output, the weights of each column of y will be multiplied.
-
-        Note that these weights will be multiplied with sample_weight (passed
-        through the fit method) if sample_weight is specified.
 
     Attributes
     ----------
@@ -1157,8 +1068,7 @@ class ExtraTreesClassifier(ForestClassifier):
                  n_jobs=1,
                  random_state=None,
                  verbose=0,
-                 warm_start=False,
-                 class_weight=None):
+                 warm_start=False):
         super(ExtraTreesClassifier, self).__init__(
             base_estimator=ExtraTreeClassifier(),
             n_estimators=n_estimators,
@@ -1170,8 +1080,7 @@ class ExtraTreesClassifier(ForestClassifier):
             n_jobs=n_jobs,
             random_state=random_state,
             verbose=verbose,
-            warm_start=warm_start,
-            class_weight=class_weight)
+            warm_start=warm_start)
 
         self.criterion = criterion
         self.max_depth = max_depth
@@ -1221,7 +1130,7 @@ class ExtraTreesRegressor(ForestRegressor):
         The maximum depth of the tree. If None, then nodes are expanded until
         all leaves are pure or until all leaves contain less than
         min_samples_split samples.
-        Ignored if ``max_leaf_nodes`` is not None.
+        Ignored if ``max_samples_leaf`` is not None.
         Note: this parameter is tree-specific.
 
     min_samples_split : integer, optional (default=2)
@@ -1341,12 +1250,10 @@ class RandomTreesEmbedding(BaseForest):
     An unsupervised transformation of a dataset to a high-dimensional
     sparse representation. A datapoint is coded according to which leaf of
     each tree it is sorted into. Using a one-hot encoding of the leaves,
-    this leads to a binary coding with as many ones as there are trees in
-    the forest.
+    this leads to a binary coding with as many ones as trees in the forest.
 
-    The dimensionality of the resulting representation is
-    ``n_out <= n_estimators * max_leaf_nodes``. If ``max_leaf_nodes == None``,
-    the number of leaf nodes is at most ``n_estimators * 2 ** max_depth``.
+    The dimensionality of the resulting representation is approximately
+    ``n_estimators * 2 ** max_depth``.
 
     Parameters
     ----------
@@ -1357,27 +1264,31 @@ class RandomTreesEmbedding(BaseForest):
         The maximum depth of each tree. If None, then nodes are expanded until
         all leaves are pure or until all leaves contain less than
         min_samples_split samples.
-        Ignored if ``max_leaf_nodes`` is not None.
+        Ignored if ``max_samples_leaf`` is not None.
 
     min_samples_split : integer, optional (default=2)
         The minimum number of samples required to split an internal node.
+        Note: this parameter is tree-specific.
 
     min_samples_leaf : integer, optional (default=1)
         The minimum number of samples in newly created leaves.  A split is
         discarded if after the split, one of the leaves would contain less then
         ``min_samples_leaf`` samples.
+        Note: this parameter is tree-specific.
 
     min_weight_fraction_leaf : float, optional (default=0.)
         The minimum weighted fraction of the input samples required to be at a
         leaf node.
+        Note: this parameter is tree-specific.
 
     max_leaf_nodes : int or None, optional (default=None)
         Grow trees with ``max_leaf_nodes`` in best-first fashion.
         Best nodes are defined as relative reduction in impurity.
         If None then unlimited number of leaf nodes.
         If not None then ``max_depth`` will be ignored.
+        Note: this parameter is tree-specific.
 
-    sparse_output : bool, optional (default=True)
+    sparse_output: bool, optional (default=True)
         Whether or not to return a sparse CSR matrix, as default behavior,
         or to return a dense array compatible with dense pipeline operators.
 
@@ -1460,7 +1371,7 @@ class RandomTreesEmbedding(BaseForest):
         X : array-like or sparse matrix, shape=(n_samples, n_features)
             The input samples. Use ``dtype=np.float32`` for maximum
             efficiency. Sparse matrices are also supported, use sparse
-            ``csc_matrix`` for maximum efficiency.
+            ``csc_matrix`` for maximum efficieny.
 
         Returns
         -------
@@ -1482,7 +1393,7 @@ class RandomTreesEmbedding(BaseForest):
 
         Returns
         -------
-        X_transformed : sparse matrix, shape=(n_samples, n_out)
+        X_transformed: sparse matrix, shape=(n_samples, n_out)
             Transformed dataset.
         """
         # ensure_2d=False because there are actually unit test checking we fail
@@ -1509,11 +1420,11 @@ class RandomTreesEmbedding(BaseForest):
         X : array-like or sparse matrix, shape=(n_samples, n_features)
             Input data to be transformed. Use ``dtype=np.float32`` for maximum
             efficiency. Sparse matrices are also supported, use sparse
-            ``csr_matrix`` for maximum efficiency.
+            ``csr_matrix`` for maximum efficieny.
 
         Returns
         -------
-        X_transformed : sparse matrix, shape=(n_samples, n_out)
+        X_transformed: sparse matrix, shape=(n_samples, n_out)
             Transformed dataset.
         """
         return self.one_hot_encoder_.transform(self.apply(X))

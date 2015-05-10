@@ -39,13 +39,11 @@ import warnings
 import scipy.sparse as sp
 
 from .base import BaseEstimator, ClassifierMixin, clone, is_classifier
-from .base import MetaEstimatorMixin, is_regressor
+from .base import MetaEstimatorMixin
 from .preprocessing import LabelBinarizer
 from .metrics.pairwise import euclidean_distances
 from .utils import check_random_state
 from .utils.validation import _num_samples
-from .utils.validation import check_consistent_length
-from .utils.validation import check_is_fitted
 from .utils import deprecated
 from .externals.joblib import Parallel
 from .externals.joblib import delayed
@@ -77,8 +75,6 @@ def _fit_binary(estimator, X, y, classes=None):
 
 def _predict_binary(estimator, X):
     """Make predictions using a single binary estimator."""
-    if is_regressor(estimator):
-        return estimator.predict(X)
     try:
         score = np.ravel(estimator.decision_function(X))
     except (AttributeError, NotImplementedError):
@@ -121,7 +117,7 @@ def fit_ovr(estimator, X, y, n_jobs=1):
     lb : fitted LabelBinarizer
 
     """
-    ovr = OneVsRestClassifier(estimator, n_jobs=n_jobs).fit(X, y)
+    ovr =  OneVsRestClassifier(estimator, n_jobs=n_jobs).fit(X, y)
     return ovr.estimators_, ovr.label_binarizer_
 
 
@@ -180,24 +176,17 @@ def predict_proba_ovr(estimators, X, is_multilabel):
 
 
 class _ConstantPredictor(BaseEstimator):
-
     def fit(self, X, y):
         self.y_ = y
         return self
 
     def predict(self, X):
-        check_is_fitted(self, 'y_')
-
         return np.repeat(self.y_, X.shape[0])
 
     def decision_function(self, X):
-        check_is_fitted(self, 'y_')
-
         return np.repeat(self.y_, X.shape[0])
 
     def predict_proba(self, X):
-        check_is_fitted(self, 'y_')
-
         return np.repeat([np.hstack([1 - self.y_, self.y_])],
                          X.shape[0], axis=0)
 
@@ -267,6 +256,7 @@ class OneVsRestClassifier(BaseEstimator, ClassifierMixin, MetaEstimatorMixin):
         -------
         self
         """
+        _check_estimator(self.estimator)
         # A sparse LabelBinarizer, with sparse_output=True, has been shown to
         # outpreform or match a dense label binarizer in all cases and has also
         # resulted in less or equal memory consumption in the fit_ovr function
@@ -278,13 +268,17 @@ class OneVsRestClassifier(BaseEstimator, ClassifierMixin, MetaEstimatorMixin):
         # In cases where individual estimators are very fast to train setting
         # n_jobs > 1 in can results in slower performance due to the overhead
         # of spawning threads.  See joblib issue #112.
-        self.estimators_ = Parallel(n_jobs=self.n_jobs)(delayed(_fit_binary)(
-            self.estimator, X, column, classes=[
-                "not %s" % self.label_binarizer_.classes_[i],
-                self.label_binarizer_.classes_[i]])
-            for i, column in enumerate(columns))
+        self.estimators_ = Parallel(n_jobs=self.n_jobs)(delayed(_fit_binary)
+             (self.estimator, X, column,
+              classes=["not %s" % self.label_binarizer_.classes_[i],
+                       self.label_binarizer_.classes_[i]])
+              for i, column in enumerate(columns))
 
         return self
+
+    def _check_is_fitted(self):
+        if not hasattr(self, "estimators_"):
+            raise ValueError("The object hasn't been fitted yet!")
 
     def predict(self, X):
         """Predict multi-class targets using underlying estimators.
@@ -299,7 +293,7 @@ class OneVsRestClassifier(BaseEstimator, ClassifierMixin, MetaEstimatorMixin):
         y : (sparse) array-like, shape = [n_samples] or [n_samples, n_classes].
             Predicted multi-class targets.
         """
-        check_is_fitted(self, 'estimators_')
+        self._check_is_fitted()
         if (hasattr(self.estimators_[0], "decision_function") and
                 is_classifier(self.estimators_[0])):
             thresh = 0
@@ -350,7 +344,6 @@ class OneVsRestClassifier(BaseEstimator, ClassifierMixin, MetaEstimatorMixin):
             Returns the probability of the sample for each class in the model,
             where classes are ordered as they are in `self.classes_`.
         """
-        check_is_fitted(self, 'estimators_')
         # Y[i,j] gives the probability that sample i has the label j.
         # In the multi-label case, these are not disjoint.
         Y = np.array([e.predict_proba(X)[:, 1] for e in self.estimators_]).T
@@ -365,6 +358,7 @@ class OneVsRestClassifier(BaseEstimator, ClassifierMixin, MetaEstimatorMixin):
             Y /= np.sum(Y, axis=1)[:, np.newaxis]
         return Y
 
+
     def decision_function(self, X):
         """Returns the distance of each sample from the decision boundary for
         each class. This can only be used with estimators which implement the
@@ -378,7 +372,6 @@ class OneVsRestClassifier(BaseEstimator, ClassifierMixin, MetaEstimatorMixin):
         -------
         T : array-like, shape = [n_samples, n_classes]
         """
-        check_is_fitted(self, 'estimators_')
         if not hasattr(self.estimators_[0], "decision_function"):
             raise AttributeError(
                 "Base estimator doesn't have a decision_function attribute.")
@@ -396,7 +389,7 @@ class OneVsRestClassifier(BaseEstimator, ClassifierMixin, MetaEstimatorMixin):
 
     @property
     def coef_(self):
-        check_is_fitted(self, 'estimators_')
+        self._check_is_fitted()
         if not hasattr(self.estimators_[0], "coef_"):
             raise AttributeError(
                 "Base estimator doesn't have a coef_ attribute.")
@@ -404,7 +397,7 @@ class OneVsRestClassifier(BaseEstimator, ClassifierMixin, MetaEstimatorMixin):
 
     @property
     def intercept_(self):
-        check_is_fitted(self, 'estimators_')
+        self._check_is_fitted()
         if not hasattr(self.estimators_[0], "intercept_"):
             raise AttributeError(
                 "Base estimator doesn't have an intercept_ attribute.")
@@ -423,14 +416,14 @@ def _fit_ovo_binary(estimator, X, y, i, j):
 
 
 @deprecated("fit_ovo is deprecated and will be removed in 0.18."
-            "Use the OneVsOneClassifier instead.")
+            "Use the OneVsRestClassifier instead.")
 def fit_ovo(estimator, X, y, n_jobs=1):
-    ovo = OneVsOneClassifier(estimator, n_jobs=n_jobs).fit(X, y)
+    ovo =  OneVsOneClassifier(estimator, n_jobs=n_jobs).fit(X, y)
     return ovo.estimators_, ovo.classes_
 
 
 @deprecated("predict_ovo is deprecated and will be removed in 0.18."
-            "Use the OneVsOneClassifier instead.")
+            "Use the OneVsRestClassifier instead.")
 def predict_ovo(estimators, classes, X):
     """Make predictions using the one-vs-one strategy."""
 
@@ -492,16 +485,13 @@ class OneVsOneClassifier(BaseEstimator, ClassifierMixin, MetaEstimatorMixin):
         X : (sparse) array-like, shape = [n_samples, n_features]
             Data.
 
-        y : array-like, shape = [n_samples]
+        y : numpy array of shape [n_samples]
             Multi-class targets.
 
         Returns
         -------
         self
         """
-        y = np.asarray(y)
-        check_consistent_length(X, y)
-
         self.classes_ = np.unique(y)
         n_classes = self.classes_.shape[0]
         self.estimators_ = Parallel(n_jobs=self.n_jobs)(
@@ -512,11 +502,7 @@ class OneVsOneClassifier(BaseEstimator, ClassifierMixin, MetaEstimatorMixin):
         return self
 
     def predict(self, X):
-        """Estimate the best class label for each sample in X.
-
-        This is implemented as ``argmax(decision_function(X), axis=1)`` which
-        will return the label of the class with most votes by estimators
-        predicting the outcome of a decision for each possible class pair.
+        """Predict multi-class targets using underlying estimators.
 
         Parameters
         ----------
@@ -528,57 +514,35 @@ class OneVsOneClassifier(BaseEstimator, ClassifierMixin, MetaEstimatorMixin):
         y : numpy array of shape [n_samples]
             Predicted multi-class targets.
         """
-        Y = self.decision_function(X)
-        return self.classes_[Y.argmax(axis=1)]
-
-    def decision_function(self, X):
-        """Decision function for the OneVsOneClassifier.
-
-        The decision values for the samples are computed by adding the
-        normalized sum of pair-wise classification confidence levels to the
-        votes in order to disambiguate between the decision values when the
-        votes for all the classes are equal leading to a tie.
-
-        Parameters
-        ----------
-        X : array-like, shape = [n_samples, n_features]
-
-        Returns
-        -------
-        Y : array-like, shape = [n_samples, n_classes]
-        """
-        check_is_fitted(self, 'estimators_')
+        if not hasattr(self, "estimators_"):
+            raise ValueError("The object hasn't been fitted yet!")
 
         n_samples = X.shape[0]
         n_classes = self.classes_.shape[0]
         votes = np.zeros((n_samples, n_classes))
-        sum_of_confidences = np.zeros((n_samples, n_classes))
+        scores = np.zeros((n_samples, n_classes))
 
         k = 0
         for i in range(n_classes):
             for j in range(i + 1, n_classes):
                 pred = self.estimators_[k].predict(X)
-                confidence_levels_ij = _predict_binary(self.estimators_[k], X)
-                sum_of_confidences[:, i] -= confidence_levels_ij
-                sum_of_confidences[:, j] += confidence_levels_ij
+                score = _predict_binary(self.estimators_[k], X)
+                scores[:, i] -= score
+                scores[:, j] += score
                 votes[pred == 0, i] += 1
                 votes[pred == 1, j] += 1
                 k += 1
 
-        max_confidences = sum_of_confidences.max()
-        min_confidences = sum_of_confidences.min()
+        # find all places with maximum votes per sample
+        maxima = votes == np.max(votes, axis=1)[:, np.newaxis]
 
-        if max_confidences == min_confidences:
-            return votes
-
-        # Scale the sum_of_confidences to (-0.5, 0.5) and add it with votes.
-        # The motivation is to use confidence levels as a way to break ties in
-        # the votes without switching any decision made based on a difference
-        # of 1 vote.
-        eps = np.finfo(sum_of_confidences.dtype).eps
-        max_abs_confidence = max(abs(max_confidences), abs(min_confidences))
-        scale = (0.5 - eps) / max_abs_confidence
-        return votes + sum_of_confidences * scale
+        # if there are ties, use scores to break them
+        if np.any(maxima.sum(axis=1) > 1):
+            scores[~maxima] = -np.inf
+            prediction = scores.argmax(axis=1)
+        else:
+            prediction = votes.argmax(axis=1)
+        return self.classes_[prediction]
 
 
 @deprecated("fit_ecoc is deprecated and will be removed in 0.18."
@@ -611,8 +575,8 @@ def fit_ecoc(estimator, X, y, code_size=1.5, random_state=None, n_jobs=1):
     code_book_ : numpy array of shape [n_classes, code_size]
         Binary array containing the code of each class.
     """
-    ecoc = OutputCodeClassifier(estimator, random_state=random_state,
-                                n_jobs=n_jobs).fit(X, y)
+    ecoc =  OutputCodeClassifier(estimator, random_state=random_state,
+                                 n_jobs=n_jobs).fit(X, y)
     return ecoc.estimators_, ecoc.classes_, ecoc.code_book_
 
 
@@ -620,7 +584,7 @@ def fit_ecoc(estimator, X, y, code_size=1.5, random_state=None, n_jobs=1):
             "Use the OutputCodeClassifier instead.")
 def predict_ecoc(estimators, classes, code_book, X):
     """Make predictions using the error-correcting output-code strategy."""
-    ecoc = OutputCodeClassifier(clone(estimators[0]))
+    ecoc =  OutputCodeClassifier(clone(estimators[0]))
     ecoc.classes_ = classes
     ecoc.estimators_ = estimators
     ecoc.code_book_ = code_book
@@ -758,7 +722,9 @@ class OutputCodeClassifier(BaseEstimator, ClassifierMixin, MetaEstimatorMixin):
         y : numpy array of shape [n_samples]
             Predicted multi-class targets.
         """
-        check_is_fitted(self, 'estimators_')
+        if not hasattr(self, "estimators_"):
+            raise ValueError("The object hasn't been fitted yet!")
+
         Y = np.array([_predict_binary(e, X) for e in self.estimators_]).T
         pred = euclidean_distances(Y, self.code_book_).argmin(axis=1)
         return self.classes_[pred]

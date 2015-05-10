@@ -9,7 +9,6 @@ import numpy as np
 from ..base import BaseEstimator, MetaEstimatorMixin, RegressorMixin, clone
 from ..utils import check_random_state, check_array, check_consistent_length
 from ..utils.random import sample_without_replacement
-from ..utils.validation import check_is_fitted
 from .base import LinearRegression
 
 
@@ -352,8 +351,6 @@ class RANSACRegressor(BaseEstimator, MetaEstimatorMixin, RegressorMixin):
         y : array, shape = [n_samples] or [n_samples, n_targets]
             Returns predicted values.
         """
-        check_is_fitted(self, 'estimator_')
-
         return self.estimator_.predict(X)
 
     def score(self, X, y):
@@ -374,6 +371,4 @@ class RANSACRegressor(BaseEstimator, MetaEstimatorMixin, RegressorMixin):
         z : float
             Score of the prediction.
         """
-        check_is_fitted(self, 'estimator_')
-
         return self.estimator_.score(X, y)

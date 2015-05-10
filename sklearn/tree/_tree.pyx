@@ -1593,7 +1593,7 @@ cdef class PresortBestSplitter(BaseDenseSplitter):
 
     cdef void init(self, object X,
                    np.ndarray[DOUBLE_t, ndim=2, mode="c"] y,
-                   DOUBLE_t* sample_weight) except *:
+                   DOUBLE_t* sample_weight):
 
         cdef void* sample_mask = NULL
 
@@ -2134,7 +2134,6 @@ cdef class BestSparseSplitter(BaseSparseSplitter):
         return (BestSparseSplitter, (self.criterion,
                                      self.max_features,
                                      self.min_samples_leaf,
-                                     self.min_weight_leaf,
                                      self.random_state), self.__getstate__())
 
     cdef void node_split(self, double impurity, SplitRecord* split,
@@ -2352,7 +2351,6 @@ cdef class RandomSparseSplitter(BaseSparseSplitter):
         return (RandomSparseSplitter, (self.criterion,
                                        self.max_features,
                                        self.min_samples_leaf,
-                                       self.min_weight_leaf,
                                        self.random_state), self.__getstate__())
 
     cdef void node_split(self, double impurity, SplitRecord* split,
@@ -2559,7 +2557,6 @@ cdef class RandomSparseSplitter(BaseSparseSplitter):
         split[0] = best
         n_constant_features[0] = n_total_constants
 
-
 # =============================================================================
 # Tree builders
 # =============================================================================
@@ -2707,11 +2704,12 @@ cdef class DepthFirstTreeBuilder(TreeBuilder):
                                          split.threshold, impurity, n_node_samples,
                                          weighted_n_node_samples)
 
-                # Store value for all nodes, to facilitate tree/model
-                # inspection and interpretation
-                splitter.node_value(tree.value + node_id * tree.value_stride)
+                if is_leaf:
+                    # Don't store value for internal nodes
+                    splitter.node_value(tree.value +
+                                        node_id * tree.value_stride)
 
-                if not is_leaf:
+                else:
                     # Push right child on stack
                     rc = stack.push(split.pos, end, depth + 1, node_id, 0,
                                     split.impurity_right, n_constant_features)
@@ -3345,26 +3343,23 @@ cdef class Tree:
         cdef Node* node = nodes
         cdef Node* end_node = node + self.node_count
 
-        cdef double normalizer = 0.
-
         cdef np.ndarray[np.float64_t, ndim=1] importances
         importances = np.zeros((self.n_features,))
-        cdef DOUBLE_t* importance_data = <DOUBLE_t*>importances.data
 
-        with nogil:
-            while node != end_node:
-                if node.left_child != _TREE_LEAF:
-                    # ... and node.right_child != _TREE_LEAF:
-                    left = &nodes[node.left_child]
-                    right = &nodes[node.right_child]
+        while node != end_node:
+            if node.left_child != _TREE_LEAF:
+                # ... and node.right_child != _TREE_LEAF:
+                left = &nodes[node.left_child]
+                right = &nodes[node.right_child]
 
-                    importance_data[node.feature] += (
-                        node.weighted_n_node_samples * node.impurity -
-                        left.weighted_n_node_samples * left.impurity -
-                        right.weighted_n_node_samples * right.impurity)
-                node += 1
+                importances[node.feature] += (
+                    node.weighted_n_node_samples * node.impurity -
+                    left.weighted_n_node_samples * left.impurity -
+                    right.weighted_n_node_samples * right.impurity)
+            node += 1
 
-        importances /= nodes[0].weighted_n_node_samples
+        importances = importances / nodes[0].weighted_n_node_samples
+        cdef double normalizer
 
         if normalize:
             normalizer = np.sum(importances)
@@ -3480,3 +3475,5 @@ cdef inline double rand_uniform(double low, double high,
 
 cdef inline double log(double x) nogil:
     return ln(x) / ln(2.0)
+
+

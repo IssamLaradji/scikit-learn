@@ -181,8 +181,7 @@ struct problem * csr_set_problem (char *values, npy_intp *n_indices,
 /* Create a paramater struct with and return it */
 struct parameter *set_parameter(int solver_type, double eps, double C,
                                 npy_intp nr_weight, char *weight_label,
-                                char *weight, int max_iter, unsigned seed, 
-                                double epsilon)
+                                char *weight, int max_iter, unsigned seed)
 {
     struct parameter *param = malloc(sizeof(struct parameter));
     if (param == NULL)
@@ -192,7 +191,7 @@ struct parameter *set_parameter(int solver_type, double eps, double C,
     param->solver_type = solver_type;
     param->eps = eps;
     param->C = C;
-    param->p = epsilon;  // epsilon for epsilon-SVR
+    param->p = .1;  // epsilon for epsilon-SVR; TODO pass as a parameter
     param->nr_weight = (int) nr_weight;
     param->weight_label = (int *) weight_label;
     param->weight = (double *) weight;

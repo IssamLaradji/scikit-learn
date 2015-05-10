@@ -72,24 +72,24 @@ except ImportError:
 try:
     from nose.tools import assert_raises_regex
 except ImportError:
-    # for Python 2
+    # for Py 2.6
     def assert_raises_regex(expected_exception, expected_regexp,
-                            callable_obj=None, *args, **kwargs):
+                             callable_obj=None, *args, **kwargs):
         """Helper function to check for message patterns in exceptions"""
 
         not_raised = False
         try:
             callable_obj(*args, **kwargs)
             not_raised = True
-        except expected_exception as e:
+        except Exception as e:
             error_message = str(e)
             if not re.compile(expected_regexp).search(error_message):
                 raise AssertionError("Error message should match pattern "
                                      "%r. %r does not." %
                                      (expected_regexp, error_message))
         if not_raised:
-            raise AssertionError("%s not raised by %s" %
-                                 (expected_exception.__name__, callable_obj.__name__))
+            raise AssertionError("Should have raised %r" %
+                                 expected_exception(expected_regexp))
 
 # assert_raises_regexp is deprecated in Python 3.4 in favor of
 # assert_raises_regex but lets keep the bacward compat in scikit-learn with
@@ -157,7 +157,7 @@ def assert_warns(warning_class, func, *args, **kw):
         if hasattr(np, 'VisibleDeprecationWarning'):
             # Filter out numpy-specific warnings in numpy >= 1.9
             w = [e for e in w
-                 if e.category is not np.VisibleDeprecationWarning]
+                 if not e.category is np.VisibleDeprecationWarning]
 
         # Verify some things
         if not len(w) > 0:
@@ -212,32 +212,23 @@ def assert_warns_message(warning_class, message, func, *args, **kw):
             raise AssertionError("No warning raised when calling %s"
                                  % func.__name__)
 
-        found = [warning.category is warning_class for warning in w]
-        if not any(found):
-            raise AssertionError("No warning raised for %s with class "
-                                 "%s"
-                                 % (func.__name__, warning_class))
+        if not w[0].category is warning_class:
+            raise AssertionError("First warning for %s is not a "
+                                 "%s( is %s)"
+                                 % (func.__name__, warning_class, w[0]))
 
-        message_found = False
-        # Checks the message of all warnings belong to warning_class
-        for index in [i for i, x in enumerate(found) if x]:
-            # substring will match, the entire message with typo won't
-            msg = w[index].message  # For Python 3 compatibility
-            msg = str(msg.args[0] if hasattr(msg, 'args') else msg)
-            if callable(message):  # add support for certain tests
-                check_in_message = message
-            else:
-                check_in_message = lambda msg: message in msg
-
-            if check_in_message(msg):
-                message_found = True
-                break
-
-        if not message_found:
-            raise AssertionError("Did not receive the message you expected "
-                                 "('%s') for <%s>."
-                                 % (message, func.__name__))
-
+        # substring will match, the entire message with typo won't
+        msg = w[0].message  # For Python 3 compatibility
+        msg = str(msg.args[0] if hasattr(msg, 'args') else msg)
+        if callable(message):  # add support for certain tests
+            check_in_message = message
+        else:
+            check_in_message = lambda msg: message in msg
+        if not check_in_message(msg):
+            raise AssertionError("The message received ('%s') for <%s> is "
+                                 "not the one you expected ('%s')"
+                                 % (msg, func.__name__,  message
+                                    ))
     return result
 
 
@@ -255,7 +246,7 @@ def assert_no_warnings(func, *args, **kw):
         if hasattr(np, 'VisibleDeprecationWarning'):
             # Filter out numpy-specific warnings in numpy >= 1.9
             w = [e for e in w
-                 if e.category is not np.VisibleDeprecationWarning]
+                 if not e.category is np.VisibleDeprecationWarning]
 
         if len(w) > 0:
             raise AssertionError("Got warnings when calling %s: %s"
@@ -389,8 +380,13 @@ else:
 
 def assert_raise_message(exception, message, function, *args, **kwargs):
     """Helper function to test error messages in exceptions"""
-    assert_raises_regex(
-        exception, re.escape(message), function, *args, **kwargs)
+
+    try:
+        function(*args, **kwargs)
+        raise AssertionError("Should have raised %r" % exception(message))
+    except exception as e:
+        error_message = str(e)
+        assert_in(message, error_message)
 
 
 def fake_mldata(columns_dict, dataname, matfile, ordering=None):
@@ -398,22 +394,14 @@ def fake_mldata(columns_dict, dataname, matfile, ordering=None):
 
     Parameters
     ----------
-    columns_dict : dict, keys=str, values=ndarray
-        Contains data as columns_dict[column_name] = array of data.
+    columns_dict: contains data as
+                  columns_dict[column_name] = array of data
+    dataname: name of data set
+    matfile: file-like object or file name
+    ordering: list of column_names, determines the ordering in the data set
 
-    dataname : string
-        Name of data set.
-
-    matfile : string or file object
-        The file name string or the file-like object of the output file.
-
-    ordering : list, default None
-        List of column_names, determines the ordering in the data set.
-
-    Notes
-    -----
-    This function transposes all arrays, while fetch_mldata only transposes
-    'data', keep that into account in the tests.
+    Note: this function transposes all arrays, while fetch_mldata only
+    transposes 'data', keep that into account in the tests.
     """
     datasets = dict(columns_dict)
 
@@ -487,32 +475,18 @@ META_ESTIMATORS = ["OneVsOneClassifier",
                    "OutputCodeClassifier", "OneVsRestClassifier", "RFE",
                    "RFECV", "BaseEnsemble"]
 # estimators that there is no way to default-construct sensibly
-OTHER = ["Pipeline", "FeatureUnion", "GridSearchCV",
-         "RandomizedSearchCV"]
+OTHER = ["Pipeline", "FeatureUnion", "GridSearchCV", "RandomizedSearchCV"]
 
 # some trange ones
 DONT_TEST = ['SparseCoder', 'EllipticEnvelope', 'DictVectorizer',
-             'LabelBinarizer', 'LabelEncoder',
-             'MultiLabelBinarizer', 'TfidfTransformer',
-             'TfidfVectorizer', 'IsotonicRegression',
-             'OneHotEncoder', 'RandomTreesEmbedding',
-             'FeatureHasher', 'DummyClassifier', 'DummyRegressor',
-             'TruncatedSVD', 'PolynomialFeatures',
-             'GaussianRandomProjectionHash', 'HashingVectorizer',
-             'CheckingClassifier', 'PatchExtractor', 'CountVectorizer',
-             # GradientBoosting base estimators, maybe should
-             # exclude them in another way
-             'ZeroEstimator', 'ScaledLogOddsEstimator',
-             'QuantileEstimator', 'MeanEstimator',
-             'LogOddsEstimator', 'PriorProbabilityEstimator',
-             '_SigmoidCalibration', 'VotingClassifier']
+             'LabelBinarizer', 'LabelEncoder', 'MultiLabelBinarizer',
+             'TfidfTransformer', 'IsotonicRegression', 'OneHotEncoder',
+             'RandomTreesEmbedding', 'FeatureHasher', 'DummyClassifier',
+             'DummyRegressor', 'TruncatedSVD', 'PolynomialFeatures']
 
 
-
-def all_estimators(include_meta_estimators=False,
-                   include_other=False, type_filter=None,
-                   include_dont_test=False):
-                   
+def all_estimators(include_meta_estimators=False, include_other=False,
+                   type_filter=None, include_dont_test=False):
     """Get a list of all estimators from sklearn.
 
     This function crawls the module and gets all classes that inherit
@@ -536,12 +510,11 @@ def all_estimators(include_meta_estimators=False,
     include_dont_test : boolean, default=False
         Whether to include "special" label estimator or test processors.
 
-    type_filter : string, list of string,  or None, default=None
+    type_filter : string or None, default=None
         Which kind of estimators should be returned. If None, no filter is
         applied and all estimators are returned.  Possible values are
         'classifier', 'regressor', 'cluster' and 'transformer' to get
-        estimators only of these specific types, or a list of these to
-        get the estimators that fit at least one of the types.
+        estimators only of these specific types.
 
     Returns
     -------
@@ -583,29 +556,26 @@ def all_estimators(include_meta_estimators=False,
     # possibly get rid of meta estimators
     if not include_meta_estimators:
         estimators = [c for c in estimators if not c[0] in META_ESTIMATORS]
-    if type_filter is not None:
-        if not isinstance(type_filter, list):
-            type_filter = [type_filter]
-        else:
-            type_filter = list(type_filter)  # copy
-        filtered_estimators = []
-        filters = {'classifier': ClassifierMixin,
-                   'regressor': RegressorMixin,
-                   'transformer': TransformerMixin,
-                   'cluster': ClusterMixin}
-        for name, mixin in filters.items():
-            if name in type_filter:
-                type_filter.remove(name)
-                filtered_estimators.extend([est for est in estimators
-                                            if issubclass(est[1], mixin)])
-        estimators = filtered_estimators
-        if type_filter:
-            raise ValueError("Parameter type_filter must be 'classifier', "
-                             "'regressor', 'transformer', 'cluster' or None, got"
-                             " %s." % repr(type_filter))
 
-    # drop duplicates, sort for reproducibility
-    return sorted(set(estimators))
+    if type_filter == 'classifier':
+        estimators = [est for est in estimators
+                      if issubclass(est[1], ClassifierMixin)]
+    elif type_filter == 'regressor':
+        estimators = [est for est in estimators
+                      if issubclass(est[1], RegressorMixin)]
+    elif type_filter == 'transformer':
+        estimators = [est for est in estimators
+                      if issubclass(est[1], TransformerMixin)]
+    elif type_filter == 'cluster':
+        estimators = [est for est in estimators
+                      if issubclass(est[1], ClusterMixin)]
+    elif type_filter is not None:
+        raise ValueError("Parameter type_filter must be 'classifier', "
+                         "'regressor', 'transformer', 'cluster' or None, got"
+                         " %s." % repr(type_filter))
+
+    # We sort in order to have reproducible test failures
+    return sorted(estimators)
 
 
 def set_random_state(estimator, random_state=0):
@@ -622,9 +592,8 @@ def if_matplotlib(func):
             import matplotlib
             matplotlib.use('Agg', warn=False)
             # this fails if no $DISPLAY specified
-            import matplotlib.pyplot as plt
-            plt.figure()
-        except ImportError:
+            matplotlib.pylab.figure()
+        except:
             raise SkipTest('Matplotlib not available.')
         else:
             return func(*args, **kwargs)

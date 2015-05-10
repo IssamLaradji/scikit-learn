@@ -20,7 +20,6 @@ import gzip
 import posixpath
 import subprocess
 import warnings
-from sklearn.externals import six
 
 
 # Try Python 2 first, otherwise load from Python 3
@@ -43,7 +42,7 @@ try:
     execfile
 except NameError:
     def execfile(filename, global_vars=None, local_vars=None):
-        with open(filename, encoding='utf-8') as f:
+        with open(filename) as f:
             code = compile(f.read(), filename, 'exec')
             exec(code, global_vars, local_vars)
 
@@ -427,10 +426,7 @@ carousel_thumbs = {'plot_classifier_comparison_001.png': (1, 600),
 def extract_docstring(filename, ignore_heading=False):
     """ Extract a module-level docstring, if any
     """
-    if six.PY2:
-        lines = open(filename).readlines()
-    else:
-        lines = open(filename, encoding='utf-8').readlines()
+    lines = open(filename).readlines()
     start_row = 0
     if lines[0].startswith('#!'):
         lines.pop(0)
@@ -503,15 +499,16 @@ def generate_example_rst(app):
     <style type="text/css">
     div#sidebarbutton {
         /* hide the sidebar collapser, while ensuring vertical arrangement */
-        display: none;
+        width: 0px;
+        overflow: hidden;
     }
     </style>
 
-.. _examples-index:
 
 Examples
 ========
 
+.. _examples-index:
 """)
     # Here we don't use an os.walk, but we recurse only twice: flat is
     # better than nested.
@@ -526,10 +523,7 @@ Examples
 def extract_line_count(filename, target_dir):
     # Extract the line count of a file
     example_file = os.path.join(target_dir, filename)
-    if six.PY2:
-        lines = open(example_file).readlines()
-    else:
-        lines = open(example_file, encoding='utf-8').readlines()
+    lines = open(example_file).readlines()
     start_row = 0
     if lines and lines[0].startswith('#!'):
         lines.pop(0)
@@ -577,9 +571,11 @@ def _thumbnail_div(subdir, full_dir, fname, snippet):
 .. raw:: html
 
 
-    <div class="thumbnailContainer" tooltip="{}">
+    <div class="thumbnailContainer">
+        <div class="docstringWrapper">
 
-""".format(snippet))
+
+""")
 
     out.append('.. figure:: %s\n' % thumb)
     if link_name.startswith('._'):
@@ -593,9 +589,12 @@ def _thumbnail_div(subdir, full_dir, fname, snippet):
 
 .. raw:: html
 
+
+    <p>%s
+    </p></div>
     </div>
 
-""" % (ref_name))
+""" % (ref_name, snippet))
     return ''.join(out)
 
 
@@ -828,7 +827,7 @@ def generate_file_rst(fname, target_dir, src_dir, root_dir, plot_gallery):
                                'stdout_%s.txt' % base_image_name)
     time_path = os.path.join(image_dir,
                              'time_%s.txt' % base_image_name)
-    thumb_file = os.path.join(thumb_dir, base_image_name + '.png')
+    thumb_file = os.path.join(thumb_dir, fname[:-3] + '.png')
     time_elapsed = 0
     if plot_gallery and fname.startswith('plot'):
         # generate the plot as png image if file name
@@ -888,16 +887,8 @@ def generate_file_rst(fname, target_dir, src_dir, root_dir, plot_gallery):
                 for fig_mngr in fig_managers:
                     # Set the fig_num figure as the current figure as we can't
                     # save a figure that's not the current figure.
-                    fig = plt.figure(fig_mngr.num)
-                    kwargs = {}
-                    to_rgba = matplotlib.colors.colorConverter.to_rgba
-                    for attr in ['facecolor', 'edgecolor']:
-                        fig_attr = getattr(fig, 'get_' + attr)()
-                        default_attr = matplotlib.rcParams['figure.' + attr]
-                        if to_rgba(fig_attr) != to_rgba(default_attr):
-                            kwargs[attr] = fig_attr
-
-                    fig.savefig(image_path % fig_mngr.num, **kwargs)
+                    plt.figure(fig_mngr.num)
+                    plt.savefig(image_path % fig_mngr.num)
                     figure_list.append(image_fname % fig_mngr.num)
             except:
                 print(80 * '_')
@@ -933,7 +924,7 @@ def generate_file_rst(fname, target_dir, src_dir, root_dir, plot_gallery):
             os.makedirs(car_thumb_path)
         if os.path.exists(first_image_file):
             # We generate extra special thumbnails for the carousel
-            carousel_tfile = os.path.join(car_thumb_path, base_image_name + '_carousel.png')
+            carousel_tfile = os.path.join(car_thumb_path, fname[:-3] + '_carousel.png')
             first_img = image_fname % 1
             if first_img in carousel_thumbs:
                 make_thumbnail((image_path % carousel_thumbs[first_img][0]),
@@ -957,16 +948,12 @@ def generate_file_rst(fname, target_dir, src_dir, root_dir, plot_gallery):
             image_list += HLIST_IMAGE_TEMPLATE % figure_name.lstrip('/')
 
     time_m, time_s = divmod(time_elapsed, 60)
-    f = open(os.path.join(target_dir, base_image_name + '.rst'), 'w')
+    f = open(os.path.join(target_dir, fname[:-2] + 'rst'), 'w')
     f.write(this_template % locals())
     f.flush()
 
     # save variables so we can later add links to the documentation
-    if six.PY2:
-        example_code_obj = identify_names(open(example_file).read())
-    else:
-        example_code_obj = \
-            identify_names(open(example_file, encoding='utf-8').read())
+    example_code_obj = identify_names(open(example_file).read())
     if example_code_obj:
         codeobj_fname = example_file[:-3] + '_codeobj.pickle'
         with open(codeobj_fname, 'wb') as fid:
@@ -983,10 +970,6 @@ def embed_code_links(app, exception):
     if exception is not None:
         return
     print('Embedding documentation hyperlinks in examples..')
-
-    if app.builder.name == 'latex':
-        # Don't embed hyperlinks when a latex builder is used.
-        return
 
     # Add resolvers for the packages for which we want to show links
     doc_resolvers = {}

@@ -155,9 +155,8 @@ if __name__ == "__main__":
         estimator = ESTIMATORS[name]
         estimator_params = estimator.get_params()
 
-        estimator.set_params(**{p: args["random_seed"]
-                                for p in estimator_params
-                                if p.endswith("random_state")})
+        if "random_state" in estimator_params:
+            estimator.set_params(random_state=args["random_seed"])
 
         if "n_jobs" in estimator_params:
             estimator.set_params(n_jobs=args["n_jobs"])

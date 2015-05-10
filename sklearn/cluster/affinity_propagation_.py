@@ -10,8 +10,7 @@ clustering.
 import numpy as np
 
 from ..base import BaseEstimator, ClusterMixin
-from ..utils import as_float_array, check_array
-from ..utils.validation import check_is_fitted
+from ..utils import as_float_array
 from ..metrics import euclidean_distances
 from ..metrics import pairwise_distances_argmin
 
@@ -269,7 +268,7 @@ class AffinityPropagation(BaseEstimator, ClusterMixin):
     def _pairwise(self):
         return self.affinity == "precomputed"
 
-    def fit(self, X, y=None):
+    def fit(self, X):
         """ Create affinity matrix from negative euclidean distances, then
         apply affinity propagation clustering.
 
@@ -280,7 +279,7 @@ class AffinityPropagation(BaseEstimator, ClusterMixin):
             Data matrix or, if affinity is ``precomputed``, matrix of
             similarities / affinities.
         """
-        X = check_array(X, accept_sparse='csr')
+        X = np.asarray(X)
         if self.affinity == "precomputed":
             self.affinity_matrix_ = X
         elif self.affinity == "euclidean":
@@ -314,7 +313,9 @@ class AffinityPropagation(BaseEstimator, ClusterMixin):
         labels : array, shape (n_samples,)
             Index of the cluster each sample belongs to.
         """
-        check_is_fitted(self, "cluster_centers_indices_")
+        if not hasattr(self, "cluster_centers_indices_"):
+            raise ValueError("Estimator is not fitted.")
+
         if not hasattr(self, "cluster_centers_"):
             raise ValueError("Predict method is not supported when "
                              "affinity='precomputed'.")

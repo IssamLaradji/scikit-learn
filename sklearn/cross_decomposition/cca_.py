@@ -17,7 +17,8 @@ class CCA(_PLS):
         whether to scale the data?
 
     max_iter : an integer, (default 500)
-        the maximum number of iterations of the NIPALS inner loop
+        the maximum number of iterations of the NIPALS inner loop (used
+        only if algorithm="nipals")
 
     tol : non-negative real, default 1e-06.
         the tolerance used in the iterative algorithm
